@@ -1,18 +1,31 @@
 import 'dart:io';
-import 'package:path/path.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_firebase_app/fcm_utils.dart';
 import 'package:flutter_firebase_app/firebase_options.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'dart:developer';
-
 import 'package:path_provider/path_provider.dart';
+
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // If you're going to use other Firebase services in the background, such as Firestore,
+  // make sure you call `initializeApp` before using other Firebase services.
+
+  await Firebase.initializeApp();
+
+  //log("Handling a background message: ${message.messageId}");
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  //await Firebase.initializeApp();
+  await FcmUtils().initialize();
   runApp(const MyApp());
 }
 
@@ -48,7 +61,6 @@ class _BookListScreenState extends State<BookListScreen> {
   @override
   void initState() {
     super.initState();
-    //getAllBooks();
   }
 
   Future<void> getAllBooks() async {
@@ -70,7 +82,10 @@ class _BookListScreenState extends State<BookListScreen> {
     final byteData = await rootBundle.load('assets/$path');
     final file = File('${(await getTemporaryDirectory()).path}/$path');
     await file.create(recursive: true);
-    await file.writeAsBytes(byteData.buffer.asUint8List(byteData.offsetInBytes,byteData.lengthInBytes),);
+    await file.writeAsBytes(
+      byteData.buffer
+          .asUint8List(byteData.offsetInBytes, byteData.lengthInBytes),
+    );
     return file;
   }
 
@@ -94,12 +109,16 @@ class _BookListScreenState extends State<BookListScreen> {
         child: const Icon(Icons.upload_file_rounded),
         onPressed: () async {
           File file = await getImageFromAssets('images/enzyme.jpg');
-          if(await file.exists()){
+          if (await file.exists()) {
             log('found');
-          }else{
+          } else {
             log('not found');
           }
-          fireStorage .ref('profile_pic').child(basename(file.path)).putFile(file).then((p0) {
+          fireStorage
+              .ref('profile_pic')
+              .child(file.path.split('/').last)
+              .putFile(file)
+              .then((p0) {
             log(p0.toString());
           }).onError((error, stackTrace) {
             log(error.toString());
@@ -161,17 +180,20 @@ class ImageScreen extends StatefulWidget {
 
 class _ImageScreenState extends State<ImageScreen> {
   final fireStorage = FirebaseStorage.instance;
+  List<Reference> storageReference = [];
+
+  Future getImages() async {
+    await fireStorage.ref('profile_pic').listAll().then((listResult) async {
+      //log(listResult.items.length.toString());
+      storageReference = listResult.items;
+      setState(() {});
+    });
+  }
 
   @override
   void initState() {
     super.initState();
     getImages();
-  }
-
-  Future getImages() async {
-    fireStorage.ref().child("profile_pic").listAll().then((listResult) {
-      log(listResult.items.length.toString());
-    });
   }
 
   @override
@@ -180,8 +202,37 @@ class _ImageScreenState extends State<ImageScreen> {
       appBar: AppBar(
         title: const Text('Image Screen'),
       ),
-      body: Center(
-        child: Text('Image screen'),
+      body: ListView.builder(
+          itemCount: storageReference.length,
+          itemBuilder: (context, index) {
+            return ListTile(
+                onTap: () async {
+                  final url = await storageReference[index].getDownloadURL();
+                  Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => ImageViewer(url: url)));
+                },
+                title: Text(storageReference[index].name));
+          }),
+    );
+  }
+}
+
+class ImageViewer extends StatelessWidget {
+  final String url;
+
+  const ImageViewer({Key? key, required this.url}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Image Viewer'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Image.network(url,alignment: Alignment.topCenter,),
       ),
     );
   }
